@@ -1,16 +1,10 @@
-// components/video-summary-display.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertTriangle } from "lucide-react";
-
-// ... (interfaces ArticleSection, ArticleSummary remain the same)
-interface VideoSummaryDisplayProps {
-  videoId: string;
-}
+import { AlertTriangle, Volume2, Loader2 } from "lucide-react";
 
 interface ArticleSection {
   title: string;
@@ -24,13 +18,14 @@ interface ArticleSummary {
   conclusion: string;
 }
 
+interface VideoSummaryDisplayProps {
+  videoId: string;
+}
+
 // Reusable Skeleton for the content part
 function ContentSkeleton() {
-  // ... (Skeleton remains the same)
   return (
     <div className="space-y-6 p-6 rounded-lg border bg-card text-card-foreground shadow-sm">
-      {" "}
-      {/* Wrap skeleton in card structure */}
       <Skeleton className="h-8 w-3/4" /> {/* Title */}
       <div className="space-y-2">
         <Skeleton className="h-4 w-full" /> {/* Intro line 1 */}
@@ -63,6 +58,10 @@ export default function VideoSummaryDisplay({
   const [article, setArticle] = useState<ArticleSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [audioPlayer, setAudioPlayer] = useState<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     // Check for videoId early
@@ -84,6 +83,7 @@ export default function VideoSummaryDisplay({
       setLoading(true);
       setError(null);
       setArticle(null);
+      setAudioUrl(null);
 
       console.log(`Fetching summary for videoId: ${videoId} (Effect Run)`);
 
@@ -149,11 +149,75 @@ export default function VideoSummaryDisplay({
       isMounted = false; // Set flag on unmount
       console.log(`Cleaning up fetch for videoId: ${videoId}`);
       controller.abort(); // Abort the fetch request if it's still in progress
+
+      // Clean up audio resources
+      if (audioPlayer) {
+        audioPlayer.pause();
+        URL.revokeObjectURL(audioPlayer.src);
+      }
     };
     // -----------------------
-  }, [videoId]); // Dependency array remains the same
+  }, [videoId]); // Dependency array
 
-  // --- Render logic remains the same ---
+  // Function to generate text-to-speech for the article summary
+  const generateSpeech = async () => {
+    if (!article) return;
+
+    setAudioLoading(true);
+    setAudioError(null);
+
+    try {
+      // Create a concise text representation of the article for TTS
+      const summaryText = `
+        ${article.title}. 
+        ${article.introduction}
+        ${article.sections
+          .map((section) => `${section.title}. ${section.content}`)
+          .join(" ")}
+        Conclusion. ${article.conclusion}
+      `;
+
+      // Call your API endpoint that will use Groq for TTS
+      const response = await fetch("/api/text-to-speech", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: summaryText }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to generate speech");
+      }
+
+      // Get audio blob and create URL
+      const audioBlob = await response.blob();
+      const url = URL.createObjectURL(audioBlob);
+
+      // Create and configure audio player
+      const audio = new Audio(url);
+      setAudioPlayer(audio);
+      setAudioUrl(url);
+    } catch (err) {
+      console.error("Error generating speech:", err);
+      setAudioError(
+        err instanceof Error
+          ? err.message
+          : "An unknown error occurred while generating speech"
+      );
+    } finally {
+      setAudioLoading(false);
+    }
+  };
+
+  const playAudio = () => {
+    if (audioPlayer) {
+      audioPlayer.play();
+    }
+  };
+
+  // --- Render logic ---
   if (loading) {
     return <ContentSkeleton />;
   }
@@ -214,7 +278,7 @@ export default function VideoSummaryDisplay({
           </footer>
         </article>
       </div>
-      <div className="flex items-center p-6 pt-0">
+      <div className="flex items-center gap-4 p-6 pt-0">
         <Button
           variant="outline"
           size="sm"
@@ -224,6 +288,42 @@ export default function VideoSummaryDisplay({
         >
           Watch Original on YouTube
         </Button>
+
+        {audioUrl ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={playAudio}
+            className="flex items-center gap-2"
+          >
+            <Volume2 className="h-4 w-4" />
+            Play Audio Summary
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={generateSpeech}
+            disabled={audioLoading}
+            className="flex items-center gap-2"
+          >
+            {audioLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Generating Audio...
+              </>
+            ) : (
+              <>
+                <Volume2 className="h-4 w-4" />
+                Generate Audio Summary
+              </>
+            )}
+          </Button>
+        )}
+
+        {audioError && (
+          <span className="text-sm text-destructive">Error: {audioError}</span>
+        )}
       </div>
     </div>
   );
